@@ -21,6 +21,8 @@ QueueHandle_t xQueueAccelerometerData;
 QueueHandle_t xQueueGyroscopeData;
 QueueHandle_t xQueueBarometerData;
 
+TaskHandle_t xFallDetectedHandle;
+
 static const char *TAG_main = "main";
 
 struct vector_and_time_pack {
@@ -83,13 +85,18 @@ void accelerometer_maths_task(void *pvParameters)
 	int64_t time_us = 0;
 	int i = 0;
 
-	const float MAX_ACC_THRESHOLD = 600;
-	const float MIN_ACC_THRESHOLD = -250;
-	const int64_t MAX_FALLING_TIME_THRESHOLD = 650;
+
+	float UPV = 0; // Upper Peak Value
+	float LPV = 0; // Lower Peak Value
+	const float UFT = 600; // Upper Fall Threshold
+	const float LFT = -250; // Lower Fall Threshold
+	int ACC_STATE = 0;
+	float LPV_time_us = 0;
+	float UPV_time_us = 0;
+	const int64_t MAX_FALLING_TIME_THRESHOLD = 600000;//650;
+
 	const int64_t MIN_FALLING_TIME_THRESHOLD = 150;
 	const int64_t MAX_FALLING_TIME_OUT = 200000;
-	float last_max_acc_val = 0;
-	float last_min_acc_val = 0;
 	int64_t last_min_val_time_us = 0;
 	int64_t last_max_val_time_us = 0;
 	int64_t min_max_delta_time_us = 0;
@@ -118,7 +125,7 @@ void accelerometer_maths_task(void *pvParameters)
 		lsm6ds33_vector_calculate_acc_raw(&acc_data);
 		acc_mag = lsm6ds33_vector_magnitude_of(acc_data); 	// linear acceleration magnitude in [mg]
 
-		// COS TU NIE TAK DZIAUA :<
+		// COS TU NIE TAK DZIAUA :< ??
 		// highpass - TO REDO
 		highpass_acc = highpass_alpha * (last_highpass_acc + acc_mag - last_acc_mag);
 		last_highpass_acc = highpass_acc;
@@ -128,46 +135,67 @@ void accelerometer_maths_task(void *pvParameters)
 		lowpass_acc = last_lowpass_acc + lowpass_alpha * (highpass_acc - last_lowpass_acc);
 		last_lowpass_acc = lowpass_acc;
 
-		ESP_LOGI(TAG_main, "time_us, acc_mag, highpass_acc, lowpass_acc == %lld, %f, %f, %f", time_us, acc_mag, highpass_acc, lowpass_acc);
+		//ESP_LOGI(TAG_main, "time_us, acc_mag, highpass_acc, lowpass_acc == %lld, %f, %f, %f", time_us, acc_mag, highpass_acc, lowpass_acc);
 
 		//change acc_mag after filters
 		acc_mag = lowpass_acc;
 
 		// now time for THE ALGORITHM
-/*
-		// get latest maximal accelerometer value
-		if (acc_mag > last_max_acc_val  && acc_mag > MAX_ACC_THRESHOLD) {
-			last_max_acc_val = acc_mag;
-			last_max_val_time_us = time_us;
-			ESP_LOGW(TAG_main, "last_max_acc = %f", last_max_acc_val);
+		switch (ACC_STATE) {
+			case 0: // Idle
+				if (acc_mag < LFT) {
+					LPV = acc_mag;
+					ACC_STATE = 1;
+				} else {
+					ACC_STATE = 0;
+				}
+				break;
+			case 1: // Lower Fall Zone
+				ESP_LOGI(TAG_main, " 1 ");
+				if (acc_mag < LPV) {
+					LPV = acc_mag;
+					ACC_STATE = 1;
+				} else {
+					LPV_time_us = esp_timer_get_time();
+					ACC_STATE = 2;
+				}
+				break;
+			case 2: // LPV got, 2nd Idle with "counting down"
+				ESP_LOGI(TAG_main, " 2 ");
+				UPV_time_us = esp_timer_get_time();
+				ESP_LOGW(TAG_main, "%f", UPV_time_us - LPV_time_us);
+				if (UPV_time_us - LPV_time_us < MAX_FALLING_TIME_THRESHOLD) {
+					if (acc_mag > UFT) {
+						UPV = acc_mag;
+						ACC_STATE = 3;
+					} else {
+						ACC_STATE = 2;
+					}
+				} else {
+					ACC_STATE = 0; //time out, going to Idle
+					ESP_LOGI(TAG_main, " 0 ");
+				}
+				break;
+			case 3: // Upper Fall Zone (practically this is a FALL, but first I'm looking for LPV)
+				ESP_LOGI(TAG_main, " 3 ");
+				UPV_time_us = esp_timer_get_time();
+				if (UPV_time_us - LPV_time_us < MAX_FALLING_TIME_THRESHOLD) {
+					if (acc_mag > UPV) {
+						UPV = acc_mag;
+						ACC_STATE = 3;
+					} else {
+						//FALL DETECTED !!!
+						ESP_LOGE(TAG_main, " F A L L,  D E T E C T E D ! ! !");
+						vTaskResume(xFallDetectedHandle);
+					}
+				} else {
+					ACC_STATE = 0; //time out, going to Idle
+					ESP_LOGI(TAG_main, " 0 ");
+				}
+				break;
+			default:
+				ESP_LOGE(TAG_main, " default stateee?");
 		}
-		// get latest minimal accelerometer value
-		if (acc_mag < last_min_acc_val && acc_mag < MIN_ACC_THRESHOLD) {
-			last_min_acc_val = acc_mag;
-			last_min_val_time_us = time_us;
-			ESP_LOGW(TAG_main, "last_min_acc = %f", last_min_acc_val);
-		}
-
-		min_max_delta_time_us = last_max_val_time_us - last_min_val_time_us;
-		if (min_max_delta_time_us < MAX_FALLING_TIME_THRESHOLD && min_max_delta_time_us > MIN_FALLING_TIME_THRESHOLD) {
-			ESP_LOGE(TAG_main, "FALL DETECTED!");
-			// FALL DETECTED!
-		}
-
-		// poinno nie za kazdym razem wszystko sprawdzac ale jakies drzewko warunkowe
-		if (last_max_val_time_us > MAX_FALLING_TIME_OUT) {
-			last_max_acc_val = 0;
-			last_min_acc_val = 0;
-			last_min_val_time_us = 0;
-			last_max_val_time_us = 0;
-			min_max_delta_time_us = 0;
-			ESP_LOGI(TAG_main, "RESET");
-		}
-		*/
-
-		// ??????????? jak i kiedy resetowac warunki max i min? przed i po kazdym upadku
-		//??????????????????????????????????
-		//moze znalezc gdzies gotowca po prostu
 
 	}
 	vTaskDelete(NULL);
@@ -307,6 +335,7 @@ void blinky(void *pvParameters)
 	gpio_pad_select_gpio(blink_gpio);
 	gpio_set_direction(blink_gpio, GPIO_MODE_OUTPUT);
 
+	vTaskDelay(5000 / portTICK_PERIOD_MS);
 	while(1)
 	{
 	    /* Blink off (output low) */;
@@ -315,6 +344,26 @@ void blinky(void *pvParameters)
 	    /* Blink on (output high) */
 	    gpio_set_level(blink_gpio, 1);
 	    vTaskDelay(1000 / portTICK_PERIOD_MS);
+	}
+	vTaskDelete(NULL);
+}
+
+void fall_detected(void *pvParameters)
+{
+	int64_t time_us = esp_timer_get_time();
+	const int64_t ALARM_TIMEOUT = 10000000;
+	const int alarm_gpio = 18;
+	gpio_pad_select_gpio(alarm_gpio);
+	gpio_set_direction(alarm_gpio, GPIO_MODE_OUTPUT);
+
+	while(1)
+	{
+	    /* Blink off (output low) */;
+	    gpio_set_level(alarm_gpio, 0);
+	    vTaskDelay(250 / portTICK_PERIOD_MS);
+	    /* Blink on (output high) */
+	    gpio_set_level(alarm_gpio, 1);
+	    vTaskDelay(250 / portTICK_PERIOD_MS);
 	}
 	vTaskDelete(NULL);
 }
@@ -372,6 +421,8 @@ void app_main()
 	if(xQueueAccelerometerData != NULL && xQueueGyroscopeData != NULL && xQueueBarometerData != NULL)
 	{
 		xTaskCreate(blinky, "blinky", 1024, NULL, 0, NULL); // "I'm alive!!!"
+		xTaskCreate(fall_detected, "fall_detected", 1024, NULL, 0, &xFallDetectedHandle);
+		vTaskSuspend(xFallDetectedHandle);
 		//xTaskCreate(check_battery, "check_battery", 2048, NULL, 0, NULL);
 		xTaskCreate(read_sensors_data_task, "read_sensors_data_task", 4096, NULL, 3, NULL);
 		xTaskCreate(accelerometer_maths_task, "accelerometer_maths_task", 2048, (void*)xQueueAccelerometerData, 2, NULL);
