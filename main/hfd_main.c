@@ -151,7 +151,7 @@ void accelerometer_maths_task(void *pvParameters)
 				}
 				break;
 			case 1: // Lower Fall Zone
-				ESP_LOGI(TAG_main, " 1 ");
+				//ESP_LOGI(TAG_main, " 1 ");
 				if (acc_mag < LPV) {
 					LPV = acc_mag;
 					ACC_STATE = 1;
@@ -161,9 +161,9 @@ void accelerometer_maths_task(void *pvParameters)
 				}
 				break;
 			case 2: // LPV got, 2nd Idle with "counting down"
-				ESP_LOGI(TAG_main, " 2 ");
+				//ESP_LOGI(TAG_main, " 2 ");
 				UPV_time_us = esp_timer_get_time();
-				ESP_LOGW(TAG_main, "%f", UPV_time_us - LPV_time_us);
+				//ESP_LOGW(TAG_main, "%f", UPV_time_us - LPV_time_us);
 				if (UPV_time_us - LPV_time_us < MAX_FALLING_TIME_THRESHOLD) {
 					if (acc_mag > UFT) {
 						UPV = acc_mag;
@@ -173,11 +173,11 @@ void accelerometer_maths_task(void *pvParameters)
 					}
 				} else {
 					ACC_STATE = 0; //time out, going to Idle
-					ESP_LOGI(TAG_main, " 0 ");
+					//ESP_LOGI(TAG_main, " 0 ");
 				}
 				break;
 			case 3: // Upper Fall Zone (practically this is a FALL, but first I'm looking for LPV)
-				ESP_LOGI(TAG_main, " 3 ");
+				//ESP_LOGI(TAG_main, " 3 ");
 				UPV_time_us = esp_timer_get_time();
 				if (UPV_time_us - LPV_time_us < MAX_FALLING_TIME_THRESHOLD) {
 					if (acc_mag > UPV) {
@@ -185,12 +185,12 @@ void accelerometer_maths_task(void *pvParameters)
 						ACC_STATE = 3;
 					} else {
 						//FALL DETECTED !!!
-						ESP_LOGE(TAG_main, " F A L L,  D E T E C T E D ! ! !");
+						//ESP_LOGE(TAG_main, " F A L L,  D E T E C T E D ! ! !");
 						vTaskResume(xFallDetectedHandle);
 					}
 				} else {
 					ACC_STATE = 0; //time out, going to Idle
-					ESP_LOGI(TAG_main, " 0 ");
+					//ESP_LOGI(TAG_main, " 0 ");
 				}
 				break;
 			default:
@@ -210,6 +210,8 @@ void gyroscope_maths_task(void *pvParameters)
 	int64_t time_us = 0;
 	int i = 0;
 
+	const float GYRO_FALL_THRESHOLD = 280; // strzelam
+
 	vTaskDelay(pdMS_TO_TICKS(1000));
 
 	while(1)
@@ -225,7 +227,13 @@ void gyroscope_maths_task(void *pvParameters)
 		lsm6ds33_vector_calculate_gyro_raw(&gyro_data);
 		gyro_mag = lsm6ds33_vector_magnitude_of(gyro_data); // angular acceleration magnitude in [dps]
 
+		//ESP_LOGI(TAG_main, "%f", gyro_mag);
+
 		// now time for THE ALGORITHM
+		if (gyro_mag > 280) { 				//totally not bad, totally should work
+			//FALL DETECTED !!!
+			vTaskResume(xFallDetectedHandle);
+		}
 
 	}
 	vTaskDelete(NULL);
