@@ -1,9 +1,13 @@
 /* Hfd main source
 */
 
+#define BIT_0 ( 1 << 0)
+#define BIT_1 ( 1 << 1)
+
 #include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/event_groups.h"
 #include "sdkconfig.h"
 #include "esp_log.h"
 #include <math.h>
@@ -20,8 +24,9 @@
 QueueHandle_t xQueueAccelerometerData;
 QueueHandle_t xQueueGyroscopeData;
 QueueHandle_t xQueueBarometerData;
-
 TaskHandle_t xFallDetectedHandle;
+EventGroupHandle_t xFallDetectionGroupHandle;
+
 
 static const char *TAG_main = "main";
 
@@ -185,8 +190,9 @@ void accelerometer_maths_task(void *pvParameters)
 						ACC_STATE = 3;
 					} else {
 						//FALL DETECTED !!!
-						//ESP_LOGE(TAG_main, " F A L L,  D E T E C T E D ! ! !");
-						vTaskResume(xFallDetectedHandle);
+						ESP_LOGE(TAG_main, " F A L L,  D E T E C T E D ! ! !");
+						//vTaskResume(xFallDetectedHandle);
+						xEventGroupSetBits(xFallDetectionGroupHandle, BIT_0 | BIT_1);
 					}
 				} else {
 					ACC_STATE = 0; //time out, going to Idle
@@ -210,7 +216,7 @@ void gyroscope_maths_task(void *pvParameters)
 	int64_t time_us = 0;
 	int i = 0;
 
-	const float GYRO_FALL_THRESHOLD = 280; // strzelam
+	const float GYRO_FALL_THRESHOLD = 280; // strzelam, needs to be tested and changed
 
 	vTaskDelay(pdMS_TO_TICKS(1000));
 
@@ -232,7 +238,7 @@ void gyroscope_maths_task(void *pvParameters)
 		// now time for THE ALGORITHM
 		if (gyro_mag > 280) { 				//totally not bad, totally should work
 			//FALL DETECTED !!!
-			vTaskResume(xFallDetectedHandle);
+			//vTaskResume(xFallDetectedHandle);
 		}
 
 	}
@@ -245,18 +251,11 @@ void barometer_maths_task(void *pvParameters)
 	struct press_and_time_pack press_and_time;
 	float press_data;
 	int64_t time_us = 0;
-	int i = 0;
+	int isFirstLoop = 1;
 
-/*
-	float press_after_CMA;
-	float press_after_EMA;
-	static const float EMA_alpha = 0.01; // jaki ustawic?
-	unsigned int n = 0;
-
-	enum press_algorithm_state {WAITING_FOR_CHANGE, CHECKING_IF_FALL} state = WAITING_FOR_CHANGE;
-	uint32_t saved_press_after_CMA = 0;
-	int64_t saved_time_us = 0;
-*/
+	float lowpass_press = 0;
+	float last_lowpass_press = 0;
+	const float lowpass_alpha = 0.01;
 
 	vTaskDelay(pdMS_TO_TICKS(1000));
 
@@ -268,59 +267,23 @@ void barometer_maths_task(void *pvParameters)
     	{
     		ESP_LOGE(TAG_main, "Barometer Queue Problem!");
     	}
-    	press_data = press_and_time.press_data / 4096.0;	// pressure in [hPa]
+    	press_data = (float)press_and_time.press_data / 4096.0;	// pressure in [hPa]
     	time_us = press_and_time.time_us;					// time of sample
 
     	// now time for THE ALGORITHM
-
-    /*
-    	// initialize CMA and EMA once
-    	if (n == 0) {
-    		press_after_CMA = press_data;
-    		press_after_EMA = press_data;
+    	if (isFirstLoop == 1)
+    	{
+    		isFirstLoop = 0;
+    		last_lowpass_press = press_data;
     	}
 
-    	// CMA - Cumulative Moving Average - slowest changing average for reference
-    	press_after_CMA = (press_data + n * press_after_CMA) / (n + 1);
-    	n++;
+    	//lowpass - TO REDO
+    	lowpass_press = last_lowpass_press + lowpass_alpha * (press_data - last_lowpass_press);
+    	last_lowpass_press = lowpass_press;
 
-    	// EMA - Expotentional Moving Average - for finding height changes optimally fast
-    	press_after_EMA = press_after_EMA + EMA_alpha * (press_data - press_after_EMA);
+    	press_data = lowpass_press;
 
-    	// Teraz je¿eli EMA jest wiêksze od CMA w danym momencie o wartosc wieksza o ?minimalna zmiana przy upadku?
-    	// ale nie wiêksz¹ ni¿ ?zmiana wiêksza niz przy upadku by by³a? to dla tego samego CMA porównaj kolejne EMA ale te po
-    	// kilku/nastu sekundach - ¿eby wyeliminowac zmiany nie wynikajace z upadku i sprawdzic czy wysokosc sie zmienila czy nie
-
-    	ESP_LOGI(TAG_main,"EMA: %f, CMA: %f", press_after_EMA, press_after_CMA);
-
-		switch(state)
-		{
-			case WAITING_FOR_CHANGE:
-				if (press_after_EMA - press_after_CMA > 0.05) {
-					saved_press_after_CMA = press_after_CMA;
-					saved_time_us = time_us;
-					state = CHECKING_IF_FALL;
-					ESP_LOGI(TAG_main, "CHECKING_IF_FALL");
-				}
-				break;
-
-			case CHECKING_IF_FALL:
-				if (!(press_after_EMA - saved_press_after_CMA > 0.05)) {
-					if (time_us - saved_time_us > 15000000) {
-						// FALL DETECTED!
-						ESP_LOGW(TAG_main, "FALL DETECTED! ~barometer");
-					} else {
-						state = WAITING_FOR_CHANGE;
-						ESP_LOGI(TAG_main, "WAITING_FOR_CHANGE");
-					}
-				}
-				break;
-		}
-*/
-		// WNIOSKI!!!!!!! Jednak CMA wgl sie nie sprawdza tutaj i lepiej bedzie przechowywac stara probke ema sprzed X czasu i do niej porównywac
-		// albo wgl jako ze i tak bedzie ttrzeba stworzyc na to bufor to moze po prostu wykorzystac tylko bufor kolowy dla ok. 100-200 próbek i
-		// wyliczac srednia?? nie zle mowie - potrzebuje bufor usrednionych wartosci a nie probek samych w sobie...
-
+    	//ESP_LOGI(TAG_main, "time_us, press == %lld, %f, ", time_us, press_data);
 	}
 	vTaskDelete(NULL);
 }
@@ -358,11 +321,22 @@ void blinky(void *pvParameters)
 
 void fall_detected(void *pvParameters)
 {
+	EventBits_t fallDetectionBits;
+	fallDetectionBits = xEventGroupWaitBits(
+							xFallDetectionGroupHandle,		// event group handle
+							BIT_0 | BIT_1,					// bits to wait for (acc and gyro)
+							pdTRUE,							// clear bits on exit
+							pdTRUE,							// wait for all bits
+							portMAX_DELAY);					// wait indefinitely
+
 	int64_t time_us = esp_timer_get_time();
 	const int64_t ALARM_TIMEOUT = 10000000;
 	const int alarm_gpio = 18;
 	gpio_pad_select_gpio(alarm_gpio);
 	gpio_set_direction(alarm_gpio, GPIO_MODE_OUTPUT);
+
+	int counter = 0;
+	const int max_times = 44;
 
 	while(1)
 	{
@@ -372,6 +346,13 @@ void fall_detected(void *pvParameters)
 	    /* Blink on (output high) */
 	    gpio_set_level(alarm_gpio, 1);
 	    vTaskDelay(250 / portTICK_PERIOD_MS);
+
+	    if(counter++ >= max_times)
+	    {
+	    	counter = 0;
+	    	gpio_set_level(alarm_gpio, 0);
+	    	//vTaskSuspend(xFallDetectedHandle);
+	    }
 	}
 	vTaskDelete(NULL);
 }
@@ -399,6 +380,20 @@ void check_battery(void *pvParameters)
 	vTaskDelete(NULL);
 }
 
+//Functiones filteros
+
+float lowpass_filter(float x[], float y[], float a)
+{
+	int n = 1;
+	return a * x[n] + (1 - a) * y[n-1];
+}
+
+float highpass_filter(float x[], float y[], float a)
+{
+	int n = 1;
+	return a * (y[n-1] + x[n] - x[n-1]);
+}
+
 void app_main()
 {
 	//esp_log_level_set(tag, ESP_LOG_DEBUG);
@@ -422,15 +417,17 @@ void app_main()
 	lsm6ds33_default_setup();
 	lps25h_default_setup();
 
-	// TASKS
+	// TASKS AND EVENT GROUPS
+	xFallDetectionGroupHandle = xEventGroupCreate();
 	xQueueAccelerometerData = xQueueCreate(10, sizeof(struct vector_and_time_pack));
 	xQueueGyroscopeData = xQueueCreate(10, sizeof(struct vector_and_time_pack));
 	xQueueBarometerData = xQueueCreate(10, sizeof(struct press_and_time_pack));
-	if(xQueueAccelerometerData != NULL && xQueueGyroscopeData != NULL && xQueueBarometerData != NULL)
+
+	if(xQueueAccelerometerData != NULL && xQueueGyroscopeData != NULL && xQueueBarometerData != NULL && xFallDetectionGroupHandle != NULL)
 	{
 		xTaskCreate(blinky, "blinky", 1024, NULL, 0, NULL); // "I'm alive!!!"
 		xTaskCreate(fall_detected, "fall_detected", 1024, NULL, 0, &xFallDetectedHandle);
-		vTaskSuspend(xFallDetectedHandle);
+		//vTaskSuspend(xFallDetectedHandle);
 		//xTaskCreate(check_battery, "check_battery", 2048, NULL, 0, NULL);
 		xTaskCreate(read_sensors_data_task, "read_sensors_data_task", 4096, NULL, 3, NULL);
 		xTaskCreate(accelerometer_maths_task, "accelerometer_maths_task", 2048, (void*)xQueueAccelerometerData, 2, NULL);
