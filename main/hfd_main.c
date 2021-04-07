@@ -190,9 +190,14 @@ void accelerometer_maths_task(void *pvParameters)
 						ACC_STATE = 3;
 					} else {
 						//FALL DETECTED !!!
-						ESP_LOGE(TAG_main, " F A L L,  D E T E C T E D ! ! !");
 						//vTaskResume(xFallDetectedHandle);
-						xEventGroupSetBits(xFallDetectionGroupHandle, BIT_0 | BIT_1);
+						xEventGroupSetBits(xFallDetectionGroupHandle, BIT_0);
+						ESP_LOGE(TAG_main, "BIT_0 set (Accelerometer)");
+						//vTaskDelay(pdMS_TO_TICKS(3000));
+						//xEventGroupClearBits(xFallDetectionGroupHandle, BIT_0);
+						//ESP_LOGE(TAG_main, "BIT_0 cleared (Accelerometer)");
+
+						ACC_STATE = 0;
 					}
 				} else {
 					ACC_STATE = 0; //time out, going to Idle
@@ -239,6 +244,11 @@ void gyroscope_maths_task(void *pvParameters)
 		if (gyro_mag > 280) { 				//totally not bad, totally should work
 			//FALL DETECTED !!!
 			//vTaskResume(xFallDetectedHandle);
+			xEventGroupSetBits(xFallDetectionGroupHandle, BIT_1);
+			ESP_LOGE(TAG_main, "BIT_1 set (Gyroscope)");
+			//vTaskDelay(pdMS_TO_TICKS(3000));
+			//xEventGroupClearBits(xFallDetectionGroupHandle, BIT_1);
+			//ESP_LOGE(TAG_main, "BIT_1 cleared (Gyroscope)");
 		}
 
 	}
@@ -322,12 +332,6 @@ void blinky(void *pvParameters)
 void fall_detected(void *pvParameters)
 {
 	EventBits_t fallDetectionBits;
-	fallDetectionBits = xEventGroupWaitBits(
-							xFallDetectionGroupHandle,		// event group handle
-							BIT_0 | BIT_1,					// bits to wait for (acc and gyro)
-							pdTRUE,							// clear bits on exit
-							pdTRUE,							// wait for all bits
-							portMAX_DELAY);					// wait indefinitely
 
 	int64_t time_us = esp_timer_get_time();
 	const int64_t ALARM_TIMEOUT = 10000000;
@@ -335,24 +339,41 @@ void fall_detected(void *pvParameters)
 	gpio_pad_select_gpio(alarm_gpio);
 	gpio_set_direction(alarm_gpio, GPIO_MODE_OUTPUT);
 
-	int counter = 0;
-	const int max_times = 44;
-
 	while(1)
 	{
-	    /* Blink off (output low) */;
-	    gpio_set_level(alarm_gpio, 0);
-	    vTaskDelay(250 / portTICK_PERIOD_MS);
-	    /* Blink on (output high) */
-	    gpio_set_level(alarm_gpio, 1);
-	    vTaskDelay(250 / portTICK_PERIOD_MS);
+		fallDetectionBits = xEventGroupWaitBits(
+								xFallDetectionGroupHandle,		// event group handle
+								BIT_0 | BIT_1,					// bits to wait for (acc and gyro)
+								pdTRUE,							// clear bits on exit
+								pdTRUE,							// wait for all bits
+								portMAX_DELAY);					// wait indefinitely
 
-	    if(counter++ >= max_times)
-	    {
-	    	counter = 0;
-	    	gpio_set_level(alarm_gpio, 0);
-	    	//vTaskSuspend(xFallDetectedHandle);
-	    }
+		ESP_LOGI(TAG_main, "Fall detected !!!");
+
+		/*
+		if ((fallDetectionBits & ( BIT_0 | BIT_1)) == ( BIT_0 | BIT_1))
+		{
+			// both bits
+		}
+		else if ((fallDetectionBits & BIT_0) != 0)
+		{
+			// acc bit
+		}
+		else if ((fallDetectionBits & BIT_1) != 0)
+		{
+			// gyro bit
+		}
+		*/
+
+		for (int i = 0; i <= 15; i++)
+		{
+			/* Blink on (output high) */
+			gpio_set_level(alarm_gpio, 1);
+			vTaskDelay(250 / portTICK_PERIOD_MS);
+			/* Blink off (output low) */;
+			gpio_set_level(alarm_gpio, 0);
+			vTaskDelay(250 / portTICK_PERIOD_MS);
+		}
 	}
 	vTaskDelete(NULL);
 }
