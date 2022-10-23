@@ -10,7 +10,7 @@
 
 #include <esp_err.h>
 
-/** LPS25H Register Macros */
+/* LPS25H Register Macros */
 #define LPS25H_REF_P_XL_ADDR          0x08
 #define	LPS25H_REF_P_L_ADDR           0x09
 #define	LPS25H_REF_P_H_ADDR           0x0A
@@ -40,15 +40,15 @@
 #define	LPS25H_RPDS_L_ADDR            0x39
 #define	LPS25H_RPDS_H_ADDR            0x3A
 
-/** LPS25H I2C Address */
+/* LPS25H I2C Address */
 #define LPS25H_I2C_ADDR 0x5D
 
-/** LPS25H WHO_AM_I identifier */
+/* LPS25H WHO_AM_I identifier */
 #define LPS25H_WHO_ID 0xBD     // add primary and secondary
 
 //-------------------------------------------------------------
 
-/** LPS25H CTRL_REG1 Settings */    //@TODO define all settings from datasheet
+/* LPS25H CTRL_REG1 Settings */    //@TODO define all settings from datasheet
 #define LPS25H_POWER_UP     0x80
 #define LPS25H_BDU_SET      0x04
 
@@ -58,13 +58,13 @@
 #define LPS25H_DATA_OUTPUT_RATE_12_5_HZ      0x30
 #define LPS25H_DATA_OUTPUT_RATE_25_HZ        0x40
 
-/** LPS25H STATUS_REG Options */
+/* LPS25H STATUS_REG Options */
 #define LPS25H_PRESS_DATA_AVAIABLE    0x02
 #define LPS25H_TEMP_DATA_AVAIABLE     0x01
 #define LPS25H_PRESS_DATA_OVERRUN     0x10
 #define LPS25H_TEMP_DATA_OVERRUN      0x08
 
-/** LPS25H Data Resolution Configuration (Internal Average) */
+/* LPS25H Data Resolution Configuration (Internal Average) */
 #define LPS25H_PRESS_AVG_8      0x00
 #define LPS25H_PRESS_AVG_32     0x01
 #define LPS25H_PRESS_AVG_128    0x02
@@ -74,7 +74,7 @@
 #define LPS25H_TEMP_AVG_32      0x08
 #define LPS25H_TEMP_AVG_64      0x0C
 
-/** LPS25H FIFO_CTRL Options **/
+/* LPS25H FIFO_CTRL Options */
 #define LPS25H_BYPASS_MODE      		0x00
 #define LPS25H_FIFO_MODE      			0x20
 #define LPS25H_STREAM_MODE      		0x40
@@ -90,7 +90,7 @@
 #define LPS25H_FIFO_MEAN_SAMPLES_16   	0x0F
 #define LPS25H_FIFO_MEAN_SAMPLES_32   	0x1F
 
-/** LPS25H Functions **/
+/* LPS25H Functions */
 
 esp_err_t lps25h_test_connection(void);
 

@@ -1,32 +1,35 @@
-/* Hfd main source
-*/
+/* Hfd main source */
 
-#define BIT_0 ( 1 << 0)
-#define BIT_1 ( 1 << 1)
+#define BIT_0 (1 << 0)
+#define BIT_1 (1 << 1)
 
 #include <stdio.h>
+#include <math.h>
+#include <time.h>
+#include <sys/time.h>
+#include <string.h>
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
 #include "sdkconfig.h"
-#include "esp_log.h"
-#include <math.h>
-#include "nvs_flash.h"
 #include "driver/gpio.h"
 #include "driver/adc.h"
+#include "nvs_flash.h"
+#include "esp_http_client.h"
+#include "esp_sntp.h"
+#include "esp_log.h"
 
-#include "../components/i2c_helper/i2c_helper.h"
-#include "../components/lps25h/lps25h.h"
-#include "../components/lsm6ds33/lsm6ds33.h"
 #include "../components/wifi_station/wifi_station.h"
-#include "../components/tcp_client_helper/tcp_client_helper.h"
+#include "../components/i2c_helper/i2c_helper.h"
+#include "../components/lsm6ds33/lsm6ds33.h"
+#include "../components/lps25h/lps25h.h"
 
 QueueHandle_t xQueueAccelerometerData;
 QueueHandle_t xQueueGyroscopeData;
 QueueHandle_t xQueueBarometerData;
 TaskHandle_t xFallDetectedHandle;
 EventGroupHandle_t xFallDetectionGroupHandle;
-
 
 static const char *TAG_main = "main";
 
@@ -40,6 +43,7 @@ struct press_and_time_pack {
 	int64_t time_us;
 };
 
+
 //////////////////////////////////////////////
 
 void read_sensors_data_task(void *pvParameters)
@@ -52,9 +56,8 @@ void read_sensors_data_task(void *pvParameters)
 	struct vector gyro_data;
 	uint32_t press_data;
 	int64_t time_us;
-	int i = 0;
 
-	vTaskDelay(1000 / portTICK_PERIOD_MS); //dla zasady
+	vTaskDelay(1000 / portTICK_PERIOD_MS);
 
 	while(1)
 	{
@@ -81,6 +84,35 @@ void read_sensors_data_task(void *pvParameters)
 	vTaskDelete(NULL);
 }
 
+static void send_telegram_msg(void *pvParameters)
+{
+	time_t now = 0;
+	struct tm timeinfo = { 0 };
+	time(&now);
+	localtime_r(&now, &timeinfo);
+	char strftime_buf[128];
+	strftime(strftime_buf, sizeof(strftime_buf), "%%5B%d%%2F%m%%2F%y,%%20%H:%M:%S%%5D%%20%%20%%20Wykryto%%20Upadek%%21", &timeinfo);
+
+	// Set http post API
+	vTaskDelay(1000 / portTICK_PERIOD_MS);
+	const char *post_url = "https://api.telegram.org/bot1828863392:AAGp0T7wdf7dw_R4044A6TZCPYcAkTt7GyA/sendMessage";
+	//char *post_data = "chat_id=1380214619&text=Wykryto%20Upadek%21%20";
+	char post_data[128] = "chat_id=1380214619&text=";
+	strcat(post_data, strftime_buf);
+	esp_err_t err;
+	esp_http_client_config_t config = {
+		.url = post_url,
+		.method = HTTP_METHOD_POST,
+		//.is_async = 1,
+	};
+	esp_http_client_handle_t client = esp_http_client_init(&config);
+	esp_http_client_set_post_field(client, post_data, strlen(post_data)); //post_data, strlen(post_data));
+	err = esp_http_client_perform(client); //send message to Telegram
+	esp_http_client_cleanup(client);
+
+	vTaskDelete(NULL);
+}
+
 void accelerometer_maths_task(void *pvParameters)
 {
 	QueueHandle_t getQueue = pvParameters;
@@ -88,23 +120,13 @@ void accelerometer_maths_task(void *pvParameters)
 	struct vector acc_data;
 	float acc_mag;
 	int64_t time_us = 0;
-	int i = 0;
 
-
-	float UPV = 0; // Upper Peak Value
-	float LPV = 0; // Lower Peak Value
+	int ACC_STATE = 0;
 	const float UFT = 600; // Upper Fall Threshold
 	const float LFT = -250; // Lower Fall Threshold
-	int ACC_STATE = 0;
-	float LPV_time_us = 0;
-	float UPV_time_us = 0;
+	float LFT_time_us = 0;
 	const int64_t MAX_FALLING_TIME_THRESHOLD = 600000;//650;
-
 	const int64_t MIN_FALLING_TIME_THRESHOLD = 150;
-	const int64_t MAX_FALLING_TIME_OUT = 200000;
-	int64_t last_min_val_time_us = 0;
-	int64_t last_max_val_time_us = 0;
-	int64_t min_max_delta_time_us = 0;
 
 	float highpass_acc = 0;
 	float last_highpass_acc = 0;
@@ -130,7 +152,6 @@ void accelerometer_maths_task(void *pvParameters)
 		lsm6ds33_vector_calculate_acc_raw(&acc_data);
 		acc_mag = lsm6ds33_vector_magnitude_of(acc_data); 	// linear acceleration magnitude in [mg]
 
-		// COS TU NIE TAK DZIAUA :< ??
 		// highpass - TO REDO
 		highpass_acc = highpass_alpha * (last_highpass_acc + acc_mag - last_acc_mag);
 		last_highpass_acc = highpass_acc;
@@ -145,69 +166,42 @@ void accelerometer_maths_task(void *pvParameters)
 		//change acc_mag after filters
 		acc_mag = lowpass_acc;
 
-		// now time for THE ALGORITHM
+		// THE ALGORITHM
 		switch (ACC_STATE) {
-			case 0: // Idle
-				if (acc_mag < LFT) {
-					LPV = acc_mag;
+			case 0: // IDLE/LFT
+				LFT_time_us = 0;
+				if (acc_mag > LFT) {
+					LFT_time_us = esp_timer_get_time();
 					ACC_STATE = 1;
 				} else {
 					ACC_STATE = 0;
 				}
 				break;
-			case 1: // Lower Fall Zone
-				//ESP_LOGI(TAG_main, " 1 ");
-				if (acc_mag < LPV) {
-					LPV = acc_mag;
-					ACC_STATE = 1;
-				} else {
-					LPV_time_us = esp_timer_get_time();
-					ACC_STATE = 2;
-				}
-				break;
-			case 2: // LPV got, 2nd Idle with "counting down"
-				//ESP_LOGI(TAG_main, " 2 ");
-				UPV_time_us = esp_timer_get_time();
-				//ESP_LOGW(TAG_main, "%f", UPV_time_us - LPV_time_us);
-				if (UPV_time_us - LPV_time_us < MAX_FALLING_TIME_THRESHOLD) {
-					if (acc_mag > UFT) {
-						UPV = acc_mag;
-						ACC_STATE = 3;
+			case 1: // UFT/TIMEOUT
+				if (acc_mag > UFT) {
+					if (esp_timer_get_time() - LFT_time_us < MIN_FALLING_TIME_THRESHOLD) {
+						ACC_STATE = 1;
 					} else {
 						ACC_STATE = 2;
 					}
 				} else {
-					ACC_STATE = 0; //time out, going to Idle
-					//ESP_LOGI(TAG_main, " 0 ");
+					if (esp_timer_get_time() - LFT_time_us > MAX_FALLING_TIME_THRESHOLD) {
+						ACC_STATE = 0;
+					} else {
+						ACC_STATE = 1;
+					}
 				}
 				break;
-			case 3: // Upper Fall Zone (practically this is a FALL, but first I'm looking for LPV)
-				//ESP_LOGI(TAG_main, " 3 ");
-				UPV_time_us = esp_timer_get_time();
-				if (UPV_time_us - LPV_time_us < MAX_FALLING_TIME_THRESHOLD) {
-					if (acc_mag > UPV) {
-						UPV = acc_mag;
-						ACC_STATE = 3;
-					} else {
-						//FALL DETECTED !!!
-						//vTaskResume(xFallDetectedHandle);
-						xEventGroupSetBits(xFallDetectionGroupHandle, BIT_0);
-						ESP_LOGE(TAG_main, "BIT_0 set (Accelerometer)");
-						//vTaskDelay(pdMS_TO_TICKS(3000));
-						//xEventGroupClearBits(xFallDetectionGroupHandle, BIT_0);
-						//ESP_LOGE(TAG_main, "BIT_0 cleared (Accelerometer)");
-
-						ACC_STATE = 0;
-					}
-				} else {
-					ACC_STATE = 0; //time out, going to Idle
-					//ESP_LOGI(TAG_main, " 0 ");
-				}
+			case 2: // FALL DETECTED!
+				xEventGroupSetBits(xFallDetectionGroupHandle, BIT_0);
+				ESP_LOGE(TAG_main, "BIT_0 set (Accelerometer)");
+				vTaskDelay(pdMS_TO_TICKS(2000));
+				xEventGroupClearBits(xFallDetectionGroupHandle, BIT_0);
+				ACC_STATE = 0;
 				break;
 			default:
-				ESP_LOGE(TAG_main, " default stateee?");
+				ACC_STATE = 0;
 		}
-
 	}
 	vTaskDelete(NULL);
 }
@@ -219,9 +213,9 @@ void gyroscope_maths_task(void *pvParameters)
 	struct vector gyro_data;
 	float gyro_mag;
 	int64_t time_us = 0;
-	int i = 0;
+	int GYRO_STATE = 0;
 
-	const float GYRO_FALL_THRESHOLD = 280; // strzelam, needs to be tested and changed
+	const float GYRO_FALL_THRESHOLD = 280; // needs to be tested and changed
 
 	vTaskDelay(pdMS_TO_TICKS(1000));
 
@@ -241,14 +235,19 @@ void gyroscope_maths_task(void *pvParameters)
 		//ESP_LOGI(TAG_main, "%f", gyro_mag);
 
 		// now time for THE ALGORITHM
-		if (gyro_mag > 280) { 				//totally not bad, totally should work
-			//FALL DETECTED !!!
-			//vTaskResume(xFallDetectedHandle);
+		switch(GYRO_STATE) {
+		case 0:
+			if (gyro_mag > GYRO_FALL_THRESHOLD) {
+				GYRO_STATE = 1;
+			}
+			break;
+		case 1:
 			xEventGroupSetBits(xFallDetectionGroupHandle, BIT_1);
 			ESP_LOGE(TAG_main, "BIT_1 set (Gyroscope)");
-			//vTaskDelay(pdMS_TO_TICKS(3000));
-			//xEventGroupClearBits(xFallDetectionGroupHandle, BIT_1);
-			//ESP_LOGE(TAG_main, "BIT_1 cleared (Gyroscope)");
+			vTaskDelay(pdMS_TO_TICKS(2000));
+			xEventGroupClearBits(xFallDetectionGroupHandle, BIT_1);
+			GYRO_STATE = 0;
+			break;
 		}
 
 	}
@@ -298,18 +297,6 @@ void barometer_maths_task(void *pvParameters)
 	vTaskDelete(NULL);
 }
 
-void test(void *pvParameters)
-{
-	size_t memo;
-	while(1)
-	{
-		vTaskDelay(100 / portTICK_PERIOD_MS);
-		memo = xPortGetFreeHeapSize();
-		printf("Free memory: %d\n", memo);
-	}
-	vTaskDelete(NULL);
-}
-
 void blinky(void *pvParameters)
 {
 	const int blink_gpio = 5;
@@ -333,8 +320,8 @@ void fall_detected(void *pvParameters)
 {
 	EventBits_t fallDetectionBits;
 
-	int64_t time_us = esp_timer_get_time();
-	const int64_t ALARM_TIMEOUT = 10000000;
+	//int64_t time_us = esp_timer_get_time();
+	//const int64_t ALARM_TIMEOUT = 10000000;
 	const int alarm_gpio = 18;
 	gpio_pad_select_gpio(alarm_gpio);
 	gpio_set_direction(alarm_gpio, GPIO_MODE_OUTPUT);
@@ -348,24 +335,13 @@ void fall_detected(void *pvParameters)
 								pdTRUE,							// wait for all bits
 								portMAX_DELAY);					// wait indefinitely
 
-		ESP_LOGI(TAG_main, "Fall detected !!!");
+		vTaskDelay(100 / portTICK_PERIOD_MS);
 
-		/*
-		if ((fallDetectionBits & ( BIT_0 | BIT_1)) == ( BIT_0 | BIT_1))
-		{
-			// both bits
+		if (eTaskGetState(send_telegram_msg) != eRunning) {
+			xTaskCreate(send_telegram_msg, "send_telegram_msg", 4096, NULL, 2, NULL);
 		}
-		else if ((fallDetectionBits & BIT_0) != 0)
-		{
-			// acc bit
-		}
-		else if ((fallDetectionBits & BIT_1) != 0)
-		{
-			// gyro bit
-		}
-		*/
 
-		for (int i = 0; i <= 15; i++)
+		for (int i = 0; i <= 10; i++)
 		{
 			/* Blink on (output high) */
 			gpio_set_level(alarm_gpio, 1);
@@ -374,6 +350,8 @@ void fall_detected(void *pvParameters)
 			gpio_set_level(alarm_gpio, 0);
 			vTaskDelay(250 / portTICK_PERIOD_MS);
 		}
+
+		vTaskDelay(3000 / portTICK_PERIOD_MS);
 	}
 	vTaskDelete(NULL);
 }
@@ -401,7 +379,7 @@ void check_battery(void *pvParameters)
 	vTaskDelete(NULL);
 }
 
-//Functiones filteros
+// Filter functions
 
 float lowpass_filter(float x[], float y[], float a)
 {
@@ -417,7 +395,7 @@ float highpass_filter(float x[], float y[], float a)
 
 void app_main()
 {
-	//esp_log_level_set(tag, ESP_LOG_DEBUG);
+	//esp_log_level_set(TAG_main, ESP_LOG_DEBUG);
 
     //Initialize NVS (for wifi_init to use)
     esp_err_t ret = nvs_flash_init();
@@ -434,6 +412,31 @@ void app_main()
 	lps25h_test_connection();
 	lsm6ds33_test_connection();
 
+	xEventGroupWaitBits(s_wifi_event_group, BIT0, pdFALSE, pdTRUE, portMAX_DELAY);
+
+	//SNTP
+	sntp_setoperatingmode(SNTP_OPMODE_POLL);
+	sntp_setservername(0, "0.pl.pool.ntp.org");
+	//sntp_set_time_sync_notification_cb(time_sync_notification_cb);
+	//sntp_set_sync_mode(SNTP_SYNC_MODE_SMOOTH);
+	sntp_init();
+	time_t now = 0;
+	struct tm timeinfo = { 0 };
+	int retry = 0;
+	const int retry_count = 10;
+	while (sntp_get_sync_status() == SNTP_SYNC_STATUS_RESET && ++retry < retry_count) {
+		ESP_LOGI(TAG_main, "Waiting for system time to be set... (%d/%d)", retry, retry_count);
+		vTaskDelay(2000 / portTICK_PERIOD_MS);
+	}
+	setenv("TZ", "CET-01CEST,M3.5.0,M10.5.0/3", 1);
+	tzset();
+
+	time(&now);
+	localtime_r(&now, &timeinfo);
+	char strftime_buf[64];
+	strftime(strftime_buf, sizeof(strftime_buf), "%c", &timeinfo);
+	ESP_LOGI(TAG_main, "The current date/time is: %s", strftime_buf);
+
 	// Set up sensors
 	lsm6ds33_default_setup();
 	lps25h_default_setup();
@@ -446,16 +449,14 @@ void app_main()
 
 	if(xQueueAccelerometerData != NULL && xQueueGyroscopeData != NULL && xQueueBarometerData != NULL && xFallDetectionGroupHandle != NULL)
 	{
-		xTaskCreate(blinky, "blinky", 1024, NULL, 0, NULL); // "I'm alive!!!"
-		xTaskCreate(fall_detected, "fall_detected", 1024, NULL, 0, &xFallDetectedHandle);
-		//vTaskSuspend(xFallDetectedHandle);
-		//xTaskCreate(check_battery, "check_battery", 2048, NULL, 0, NULL);
+		xTaskCreate(blinky, "blinky", 1024, NULL, 1, NULL); // "I'm alive!!!"
+		xTaskCreate(fall_detected, "fall_detected", 2048, NULL, 3, NULL); //&xFallDetectedHandle);
+			//xTaskCreate(check_battery, "check_battery", 2048, NULL, 0, NULL);
 		xTaskCreate(read_sensors_data_task, "read_sensors_data_task", 4096, NULL, 3, NULL);
 		xTaskCreate(accelerometer_maths_task, "accelerometer_maths_task", 2048, (void*)xQueueAccelerometerData, 2, NULL);
 		xTaskCreate(gyroscope_maths_task, "gyroscope_maths_task", 2048, (void*)xQueueGyroscopeData, 2, NULL);
 		xTaskCreate(barometer_maths_task, "barometer_maths_task", 2048, (void*)xQueueBarometerData, 2, NULL);
 
-		//xTaskCreate(tcp_client_task, "tcp_client", 4096, (void*)xQueue, 3, NULL);
 		//xTaskCreate(test, "test", 4096, (void*)xQueue, 0, NULL);
 	}
 }

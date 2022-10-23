@@ -12,7 +12,7 @@
 #include <esp_err.h>
 #include "../i2c_helper/i2c_helper.h"
 
-/** LSM6DS33 Register Macros */
+/* LSM6DS33 Register Macros */
 #define LSM6DS33_FUNC_CFG_ACCESS_ADDR    0x01
 
 #define LSM6DS33_FIFO_CTRL1_ADDR         0x06
@@ -82,15 +82,15 @@
 #define LSM6DS33_MD1_CFG_ADDR            0x5E
 #define LSM6DS33_MD2_CFG_ADDR            0x5F
 
-/** LSM6DS33 I2C Address */
+/* LSM6DS33 I2C Address */
 #define LSM6DS33_I2C_ADDR 0x6B
 
-/** LSM6DS33 WHO_AM_I identifier */
+/* LSM6DS33 WHO_AM_I identifier */
 #define LSM6DS33_WHO_ID 0x69			// add primary and secondary addr
 
 //----------------------------------------------------------------------
 
-/** LSM6DS33 CTRL1_XL Option Masks (Accelerometer) */
+/* LSM6DS33 CTRL1_XL Option Masks (Accelerometer) */
 #define LSM6DS33_ACC_POWER_DOWN            0x00
 #define LSM6DS33_ACC_DATA_RATE_12_5_HZ     0x10
 #define LSM6DS33_ACC_DATA_RATE_26_HZ       0x20
@@ -113,7 +113,7 @@
 #define LSM6DS33_ACC_AA_BANDWIDTH_100_HZ   0x02
 #define LSM6DS33_ACC_AA_BANDWIDTH_50_HZ    0x03
 
-/** LSM6DS33 CTRL1_XL Option Masks (Gyroscope) */
+/* LSM6DS33 CTRL1_XL Option Masks (Gyroscope) */
 #define LSM6DS33_GYRO_POWER_DOWN             0x00
 #define LSM6DS33_GYRO_DATA_RATE_12_5_HZ      0x10
 #define LSM6DS33_GYRO_DATA_RATE_26_HZ        0x20
@@ -131,14 +131,14 @@
 #define LSM6DS33_GYRO_FULL_SCALE_125_DPS     0x02
 
 
-/** Structure for better keeping the x, y and z values of accelerometer and gyroscope */
+/* Structure for better keeping the x, y and z values of accelerometer and gyroscope */
 struct vector {
 	float x;
 	float y;
 	float z;
 };
 
-/** LSM6DS33 functions */
+/* LSM6DS33 functions */
 
 esp_err_t lsm6ds33_test_connection(void);
 
@@ -155,8 +155,6 @@ void lsm6ds33_vector_calculate_gyro_raw(struct vector *g);
 void lsm6ds33_vector_normalise(struct vector *a);
 
 float lsm6ds33_vector_magnitude_of(struct vector v);
-
-
 
 
 #endif /* COMPONENTS_LSM6DS33_LSM6DS33_H_ */

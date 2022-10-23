@@ -1,0 +1,14 @@
+{
+    "idf.adapterTargetName": "esp32",
+    "idf.openOcdConfigs": [
+        "board/esp32-wrover-kit-3.3v.cfg"
+    ],
+    "idf.flashType": "UART",
+    "idf.portWin": "COM3",
+    "files.associations": {
+        "i2c_helper.h": "c",
+        "string.h": "c",
+        "time.h": "c",
+        "lsm6ds33.h": "c"
+    }
+}
