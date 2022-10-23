@@ -24,6 +24,7 @@
 #include "../components/i2c_helper/i2c_helper.h"
 #include "../components/lsm6ds33/lsm6ds33.h"
 #include "../components/lps25h/lps25h.h"
+#include "../credentials/credentials.h"
 
 QueueHandle_t xQueueAccelerometerData;
 QueueHandle_t xQueueGyroscopeData;
@@ -95,8 +96,11 @@ static void send_telegram_msg(void *pvParameters)
 
 	// Set http post API
 	vTaskDelay(1000 / portTICK_PERIOD_MS);
-	const char *post_url = "https://api.telegram.org/bot1828863392:AAGp0T7wdf7dw_R4044A6TZCPYcAkTt7GyA/sendMessage";
-	//char *post_data = "chat_id=1380214619&text=Wykryto%20Upadek%21%20";
+	char post_url[128] = "https://api.telegram.org/bot";
+	char post_url_end[] = "/sendMessage";
+	strcat(post_url, telegram_token); // example telegram_token = "1828863392:AAGp0T7wdf7dw_R4044A6TZCPYcAkTt7GyA"
+	strcat(post_url, post_url_end);
+
 	char post_data[128] = "chat_id=1380214619&text=";
 	strcat(post_data, strftime_buf);
 	esp_err_t err;
