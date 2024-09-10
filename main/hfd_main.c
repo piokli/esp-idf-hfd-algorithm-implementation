@@ -29,7 +29,6 @@
 QueueHandle_t xQueueAccelerometerData;
 QueueHandle_t xQueueGyroscopeData;
 QueueHandle_t xQueueBarometerData;
-TaskHandle_t xFallDetectedHandle;
 EventGroupHandle_t xFallDetectionGroupHandle;
 
 static const char *TAG_main = "main";
@@ -92,13 +91,14 @@ static void send_telegram_msg(void *pvParameters)
 	time(&now);
 	localtime_r(&now, &timeinfo);
 	char strftime_buf[128];
+	// exmple output: "[30/08/24, 07:30:18] Wykryto upadek!"
 	strftime(strftime_buf, sizeof(strftime_buf), "%%5B%d%%2F%m%%2F%y,%%20%H:%M:%S%%5D%%20%%20%%20Wykryto%%20Upadek%%21", &timeinfo);
 
 	// Set http post API
 	vTaskDelay(1000 / portTICK_PERIOD_MS);
 	char post_url[128] = "https://api.telegram.org/bot";
 	char post_url_end[] = "/sendMessage";
-	strcat(post_url, telegram_token); // example telegram_token = "1828863392:AAGp0T7wdf7dw_R4044A6TZCPYcAkTt7GyA"
+	strcat(post_url, telegram_token);
 	strcat(post_url, post_url_end);
 
 	char post_data[128] = "chat_id=1380214619&text=";
@@ -110,8 +110,8 @@ static void send_telegram_msg(void *pvParameters)
 		//.is_async = 1,
 	};
 	esp_http_client_handle_t client = esp_http_client_init(&config);
-	esp_http_client_set_post_field(client, post_data, strlen(post_data)); //post_data, strlen(post_data));
-	err = esp_http_client_perform(client); //send message to Telegram
+	esp_http_client_set_post_field(client, post_data, strlen(post_data));
+	err = esp_http_client_perform(client);
 	esp_http_client_cleanup(client);
 
 	vTaskDelete(NULL);
@@ -145,10 +145,7 @@ void accelerometer_maths_task(void *pvParameters)
 
 	while(1)
 	{
-		//ESP_LOGI(TAG_main, "Accelerometer maths %d", i++);
-
-    	if (!xQueueReceive(getQueue, &acc_and_time, portMAX_DELAY))
-    	{
+    	if (!xQueueReceive(getQueue, &acc_and_time, portMAX_DELAY)) {
     		ESP_LOGE(TAG_main, "Accelerometer Queue Problem!");
     	}
     	acc_data = acc_and_time.vector_data;
@@ -219,16 +216,13 @@ void gyroscope_maths_task(void *pvParameters)
 	int64_t time_us = 0;
 	int GYRO_STATE = 0;
 
-	const float GYRO_FALL_THRESHOLD = 280; // needs to be tested and changed
+	const float GYRO_FALL_THRESHOLD = 280;
 
 	vTaskDelay(pdMS_TO_TICKS(1000));
 
 	while(1)
 	{
-		//ESP_LOGI(TAG_main, "Gyroscope maths %d", i++);
-
-    	if (!xQueueReceive(getQueue, &gyro_and_time, portMAX_DELAY))
-    	{
+    	if (!xQueueReceive(getQueue, &gyro_and_time, portMAX_DELAY)) {
     		ESP_LOGE(TAG_main, "Gyroscope Queue Problem!");
     	}
     	gyro_data = gyro_and_time.vector_data;
@@ -276,16 +270,14 @@ void barometer_maths_task(void *pvParameters)
 	{
 		//ESP_LOGI(TAG_main, "Barometer maths %d", i++);
 
-    	if (!xQueueReceive(getQueue, &press_and_time, portMAX_DELAY))
-    	{
+    	if (!xQueueReceive(getQueue, &press_and_time, portMAX_DELAY)) {
     		ESP_LOGE(TAG_main, "Barometer Queue Problem!");
     	}
     	press_data = (float)press_and_time.press_data / 4096.0;	// pressure in [hPa]
     	time_us = press_and_time.time_us;					// time of sample
 
     	// now time for THE ALGORITHM
-    	if (isFirstLoop == 1)
-    	{
+    	if (isFirstLoop == 1) {
     		isFirstLoop = 0;
     		last_lowpass_press = press_data;
     	}
@@ -345,8 +337,7 @@ void fall_detected(void *pvParameters)
 			xTaskCreate(send_telegram_msg, "send_telegram_msg", 4096, NULL, 2, NULL);
 		}
 
-		for (int i = 0; i <= 10; i++)
-		{
+		for (int i = 0; i <= 10; i++) {
 			/* Blink on (output high) */
 			gpio_set_level(alarm_gpio, 1);
 			vTaskDelay(250 / portTICK_PERIOD_MS);
@@ -354,7 +345,6 @@ void fall_detected(void *pvParameters)
 			gpio_set_level(alarm_gpio, 0);
 			vTaskDelay(250 / portTICK_PERIOD_MS);
 		}
-
 		vTaskDelay(3000 / portTICK_PERIOD_MS);
 	}
 	vTaskDelete(NULL);
@@ -399,9 +389,7 @@ float highpass_filter(float x[], float y[], float a)
 
 void app_main()
 {
-	//esp_log_level_set(TAG_main, ESP_LOG_DEBUG);
-
-    //Initialize NVS (for wifi_init to use)
+	// Initialize NVS (for wifi_init to use)
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
       ESP_ERROR_CHECK(nvs_flash_erase());
@@ -416,8 +404,8 @@ void app_main()
 	lps25h_test_connection();
 	lsm6ds33_test_connection();
 
+	// Wait for WiFi
 	xEventGroupWaitBits(s_wifi_event_group, BIT0, pdFALSE, pdTRUE, portMAX_DELAY);
-
 	//SNTP
 	sntp_setoperatingmode(SNTP_OPMODE_POLL);
 	sntp_setservername(0, "0.pl.pool.ntp.org");
@@ -453,14 +441,11 @@ void app_main()
 
 	if(xQueueAccelerometerData != NULL && xQueueGyroscopeData != NULL && xQueueBarometerData != NULL && xFallDetectionGroupHandle != NULL)
 	{
-		xTaskCreate(blinky, "blinky", 1024, NULL, 1, NULL); // "I'm alive!!!"
-		xTaskCreate(fall_detected, "fall_detected", 2048, NULL, 3, NULL); //&xFallDetectedHandle);
-			//xTaskCreate(check_battery, "check_battery", 2048, NULL, 0, NULL);
+		xTaskCreate(blinky, "blinky", 1024, NULL, 1, NULL);
+		xTaskCreate(fall_detected, "fall_detected", 2048, NULL, 3, NULL);
 		xTaskCreate(read_sensors_data_task, "read_sensors_data_task", 4096, NULL, 3, NULL);
 		xTaskCreate(accelerometer_maths_task, "accelerometer_maths_task", 2048, (void*)xQueueAccelerometerData, 2, NULL);
 		xTaskCreate(gyroscope_maths_task, "gyroscope_maths_task", 2048, (void*)xQueueGyroscopeData, 2, NULL);
 		xTaskCreate(barometer_maths_task, "barometer_maths_task", 2048, (void*)xQueueBarometerData, 2, NULL);
-
-		//xTaskCreate(test, "test", 4096, (void*)xQueue, 0, NULL);
 	}
 }
