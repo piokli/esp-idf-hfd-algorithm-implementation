@@ -1,0 +1,9 @@
+[submodule "components/lps25h"]
+	path = components/lps25h
+	url = https://github.com/piokli/lps25h.git
+[submodule "components/lsm6ds33"]
+	path = components/lsm6ds33
+	url = https://github.com/piokli/lsm6ds33.git
+[submodule "components/i2c_helper"]
+	path = components/i2c_helper
+	url = https://github.com/piokli/i2c_helper.git
