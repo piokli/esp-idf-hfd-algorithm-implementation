@@ -32,6 +32,8 @@ QueueHandle_t xQueueGyroscopeData;
 QueueHandle_t xQueueBarometerData;
 EventGroupHandle_t xFallDetectionGroupHandle;
 
+#define TELEGRAM_MSG_BUFF_SIZE 128
+
 // extern EventGroupHandle_t s_wifi_event_group;
 
 static const char *TAG_main = "main";
@@ -89,35 +91,32 @@ void read_sensors_data_task(void *pvParameters)
 
 static void send_telegram_msg(void *pvParameters)
 {
-	time_t now = 0;
-	struct tm timeinfo = { 0 };
-	time(&now);
-	localtime_r(&now, &timeinfo);
-	char strftime_buf[128];
-	// exmple output: "[30/08/24, 07:30:18] Wykryto upadek!"
-	strftime(strftime_buf, sizeof(strftime_buf), "%%5B%d%%2F%m%%2F%y,%%20%H:%M:%S%%5D%%20%%20%%20Wykryto%%20Upadek%%21", &timeinfo);
+	// Set message and chat ID to send to
+	char telegram_msg[TELEGRAM_MSG_BUFF_SIZE];
+	strcpy(telegram_msg, (char *)pvParameters);
+	char post_data[128];
+	sprintf(post_data, "chat_id=%s&text=", TELEGRAM_CHAT_ID);
+	strcat(post_data, telegram_msg);
 
-	// Set http post API
-	vTaskDelay(1000 / portTICK_PERIOD_MS);
+	// Set http post API (url and bot token)
 	char post_url[128] = "https://api.telegram.org/bot";
 	char post_url_end[] = "/sendMessage";
 	const char telegram_token[] = TELEGRAM_BOT_TOKEN;
 	strcat(post_url, telegram_token);
 	strcat(post_url, post_url_end);
-
-	char post_data[128]; // = "chat_id=0123456789&text=";
-	sprintf(post_data, "chat_id=%s&text=", TELEGRAM_CHAT_ID);
-	strcat(post_data, strftime_buf);
 	esp_http_client_config_t config = {
 		.url = post_url,
 		.method = HTTP_METHOD_POST,
-		//.is_async = 1,
 	};
 	esp_http_client_handle_t client = esp_http_client_init(&config);
+	
+	// Perform http post
 	ESP_ERROR_CHECK(esp_http_client_set_post_field(client, post_data, strlen(post_data)));
 	ESP_ERROR_CHECK(esp_http_client_perform(client));
 	esp_http_client_cleanup(client);
 
+	// Avoid spamming messages
+	vTaskDelay(1000 / portTICK_PERIOD_MS);
 	vTaskDelete(NULL);
 }
 
@@ -338,7 +337,15 @@ void fall_detected(void *pvParameters)
 		vTaskDelay(100 / portTICK_PERIOD_MS);
 
 		if (eTaskGetState(send_telegram_msg) != eRunning) {
-			xTaskCreate(send_telegram_msg, "send_telegram_msg", 4096, NULL, 2, NULL);
+			time_t now = 0;
+			struct tm timeinfo = { 0 };
+			time(&now);
+			localtime_r(&now, &timeinfo);
+			char telegram_fall_msg[TELEGRAM_MSG_BUFF_SIZE];
+			// exmple output: "[30/08/24, 07:30:18] Wykryto upadek!"
+			strftime(telegram_fall_msg, sizeof(telegram_fall_msg), "%%5B%d%%2F%m%%2F%y,%%20%H:%M:%S%%5D%%20%%20%%20Wykryto%%20Upadek%%21", &timeinfo);
+
+			xTaskCreate(send_telegram_msg, "send_telegram_msg", 4096, telegram_fall_msg, 2, NULL);
 			ESP_LOGW(TAG_main, "Fall detected!");
 		}
 
