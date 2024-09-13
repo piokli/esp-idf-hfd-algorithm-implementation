@@ -362,10 +362,8 @@ void fall_detected(void *pvParameters)
 	vTaskDelete(NULL);
 }
 
-
 void check_battery(void *pvParameters)
 {
-	//gpio_set_direction(35, GPIO_MODE_INPUT);
 	float vbat;
 	gpio_num_t gpio_num;
 
@@ -379,8 +377,14 @@ void check_battery(void *pvParameters)
 		//vbat = gpio_get_level(35);
 		vbat = (3.9 * val / 4096) * 2;
 		ESP_LOGI(TAG_main, "Battery: %f V, at GPIO%d\n", vbat, gpio_num);
-		vTaskDelay(100 / portTICK_PERIOD_MS);
-		//printf("Battery: %d V\n", vbat);
+
+		if (eTaskGetState(send_telegram_msg) != eRunning) {
+			char telegram_fall_msg[TELEGRAM_MSG_BUFF_SIZE];
+			sprintf(telegram_fall_msg, "Battery status: %0.2fV", vbat);
+			xTaskCreate(send_telegram_msg, "send_telegram_msg", 4096, telegram_fall_msg, 2, NULL);
+			ESP_LOGW(TAG_main, "Sent battery telegram message");
+		}
+		vTaskDelay(15*60*1000 / portTICK_PERIOD_MS);
 	}
 	vTaskDelete(NULL);
 }
@@ -451,10 +455,11 @@ void app_main()
 	{
 		ESP_LOGW(TAG_main, "tasks start");
 		xTaskCreate(blinky, "blinky", 2048, NULL, 1, NULL);
+		xTaskCreate(check_battery, "check_battery", 2048, NULL, 1, NULL);
 		xTaskCreate(fall_detected, "fall_detected", 4096, NULL, 3, NULL);
 		xTaskCreate(read_sensors_data_task, "read_sensors_data_task", 4096, NULL, 3, NULL);
 		xTaskCreate(accelerometer_maths_task, "accelerometer_maths_task", 2048, (void*)xQueueAccelerometerData, 2, NULL);
 		xTaskCreate(gyroscope_maths_task, "gyroscope_maths_task", 2048, (void*)xQueueGyroscopeData, 2, NULL);
-		xTaskCreate(barometer_maths_task, "barometer_maths_task", 2048, (void*)xQueueBarometerData, 2, NULL);
+		// xTaskCreate(barometer_maths_task, "barometer_maths_task", 2048, (void*)xQueueBarometerData, 2, NULL);
 	}
 }
