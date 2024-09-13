@@ -19,6 +19,7 @@
 #include "esp_http_client.h"
 #include "esp_sntp.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 
 #include "../components/wifi_station/wifi_station.h"
 #include "../components/i2c_helper/i2c_helper.h"
@@ -30,6 +31,8 @@ QueueHandle_t xQueueAccelerometerData;
 QueueHandle_t xQueueGyroscopeData;
 QueueHandle_t xQueueBarometerData;
 EventGroupHandle_t xFallDetectionGroupHandle;
+
+// extern EventGroupHandle_t s_wifi_event_group;
 
 static const char *TAG_main = "main";
 
@@ -98,20 +101,21 @@ static void send_telegram_msg(void *pvParameters)
 	vTaskDelay(1000 / portTICK_PERIOD_MS);
 	char post_url[128] = "https://api.telegram.org/bot";
 	char post_url_end[] = "/sendMessage";
+	const char telegram_token[] = TELEGRAM_BOT_TOKEN;
 	strcat(post_url, telegram_token);
 	strcat(post_url, post_url_end);
 
-	char post_data[128] = "chat_id=1380214619&text=";
+	char post_data[128]; // = "chat_id=0123456789&text=";
+	sprintf(post_data, "chat_id=%s&text=", TELEGRAM_CHAT_ID);
 	strcat(post_data, strftime_buf);
-	esp_err_t err;
 	esp_http_client_config_t config = {
 		.url = post_url,
 		.method = HTTP_METHOD_POST,
 		//.is_async = 1,
 	};
 	esp_http_client_handle_t client = esp_http_client_init(&config);
-	esp_http_client_set_post_field(client, post_data, strlen(post_data));
-	err = esp_http_client_perform(client);
+	ESP_ERROR_CHECK(esp_http_client_set_post_field(client, post_data, strlen(post_data)));
+	ESP_ERROR_CHECK(esp_http_client_perform(client));
 	esp_http_client_cleanup(client);
 
 	vTaskDelete(NULL);
@@ -195,7 +199,7 @@ void accelerometer_maths_task(void *pvParameters)
 				break;
 			case 2: // FALL DETECTED!
 				xEventGroupSetBits(xFallDetectionGroupHandle, BIT_0);
-				ESP_LOGE(TAG_main, "BIT_0 set (Accelerometer)");
+				ESP_LOGI(TAG_main, "BIT_0 set (Accelerometer)");
 				vTaskDelay(pdMS_TO_TICKS(2000));
 				xEventGroupClearBits(xFallDetectionGroupHandle, BIT_0);
 				ACC_STATE = 0;
@@ -241,7 +245,7 @@ void gyroscope_maths_task(void *pvParameters)
 			break;
 		case 1:
 			xEventGroupSetBits(xFallDetectionGroupHandle, BIT_1);
-			ESP_LOGE(TAG_main, "BIT_1 set (Gyroscope)");
+			ESP_LOGI(TAG_main, "BIT_1 set (Gyroscope)");
 			vTaskDelay(pdMS_TO_TICKS(2000));
 			xEventGroupClearBits(xFallDetectionGroupHandle, BIT_1);
 			GYRO_STATE = 0;
@@ -296,7 +300,7 @@ void barometer_maths_task(void *pvParameters)
 void blinky(void *pvParameters)
 {
 	const int blink_gpio = 5;
-	gpio_pad_select_gpio(blink_gpio);
+	gpio_reset_pin(blink_gpio);
 	gpio_set_direction(blink_gpio, GPIO_MODE_OUTPUT);
 
 	vTaskDelay(5000 / portTICK_PERIOD_MS);
@@ -319,7 +323,7 @@ void fall_detected(void *pvParameters)
 	//int64_t time_us = esp_timer_get_time();
 	//const int64_t ALARM_TIMEOUT = 10000000;
 	const int alarm_gpio = 18;
-	gpio_pad_select_gpio(alarm_gpio);
+	gpio_reset_pin(alarm_gpio);
 	gpio_set_direction(alarm_gpio, GPIO_MODE_OUTPUT);
 
 	while(1)
@@ -335,6 +339,7 @@ void fall_detected(void *pvParameters)
 
 		if (eTaskGetState(send_telegram_msg) != eRunning) {
 			xTaskCreate(send_telegram_msg, "send_telegram_msg", 4096, NULL, 2, NULL);
+			ESP_LOGW(TAG_main, "Fall detected!");
 		}
 
 		for (int i = 0; i <= 10; i++) {
@@ -358,7 +363,7 @@ void check_battery(void *pvParameters)
 	gpio_num_t gpio_num;
 
 	adc1_config_width(ADC_WIDTH_BIT_12);
-	adc1_config_channel_atten(ADC1_CHANNEL_7, ADC_ATTEN_DB_11); //max 3.9V
+	adc1_config_channel_atten(ADC1_CHANNEL_7, ADC_ATTEN_DB_12); //max 3.9V
 	while(1)
 	{
 		int val = adc1_get_raw(ADC1_CHANNEL_7);
@@ -398,20 +403,17 @@ void app_main()
     ESP_ERROR_CHECK(ret);
 
     // Initialize Wifi, I2C and connect to sensors
-    vTaskDelay(100 / portTICK_PERIOD_MS);
 	wifi_init_sta();
 	i2c_helper_master_init();
 	lps25h_test_connection();
 	lsm6ds33_test_connection();
-
-	// Wait for WiFi
-	xEventGroupWaitBits(s_wifi_event_group, BIT0, pdFALSE, pdTRUE, portMAX_DELAY);
+	
 	//SNTP
-	sntp_setoperatingmode(SNTP_OPMODE_POLL);
-	sntp_setservername(0, "0.pl.pool.ntp.org");
+	esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+	esp_sntp_setservername(0, "pl.pool.ntp.org");
 	//sntp_set_time_sync_notification_cb(time_sync_notification_cb);
 	//sntp_set_sync_mode(SNTP_SYNC_MODE_SMOOTH);
-	sntp_init();
+	esp_sntp_init();
 	time_t now = 0;
 	struct tm timeinfo = { 0 };
 	int retry = 0;
@@ -422,7 +424,6 @@ void app_main()
 	}
 	setenv("TZ", "CET-01CEST,M3.5.0,M10.5.0/3", 1);
 	tzset();
-
 	time(&now);
 	localtime_r(&now, &timeinfo);
 	char strftime_buf[64];
@@ -441,8 +442,9 @@ void app_main()
 
 	if(xQueueAccelerometerData != NULL && xQueueGyroscopeData != NULL && xQueueBarometerData != NULL && xFallDetectionGroupHandle != NULL)
 	{
-		xTaskCreate(blinky, "blinky", 1024, NULL, 1, NULL);
-		xTaskCreate(fall_detected, "fall_detected", 2048, NULL, 3, NULL);
+		ESP_LOGW(TAG_main, "tasks start");
+		xTaskCreate(blinky, "blinky", 2048, NULL, 1, NULL);
+		xTaskCreate(fall_detected, "fall_detected", 4096, NULL, 3, NULL);
 		xTaskCreate(read_sensors_data_task, "read_sensors_data_task", 4096, NULL, 3, NULL);
 		xTaskCreate(accelerometer_maths_task, "accelerometer_maths_task", 2048, (void*)xQueueAccelerometerData, 2, NULL);
 		xTaskCreate(gyroscope_maths_task, "gyroscope_maths_task", 2048, (void*)xQueueGyroscopeData, 2, NULL);

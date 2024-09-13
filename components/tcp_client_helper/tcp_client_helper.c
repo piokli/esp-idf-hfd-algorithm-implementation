@@ -27,7 +27,7 @@ void tcp_client_task(void *pvParameters)
 
     while (1) {
     	ESP_LOGI(TAG, "Gonna be waiting for established wi-fi");
-    	xEventGroupWaitBits(s_wifi_event_group, BIT0, 1, 0, 15000 / portTICK_RATE_MS);
+    	xEventGroupWaitBits(s_wifi_event_group, BIT0, 1, 0, 15000 / portTICK_PERIOD_MS);
     	ESP_LOGI(TAG, "wifi is established");
 
         struct sockaddr_in dest_addr;
