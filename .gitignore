@@ -1,2 +1,9 @@
-/build/
+.devcontainer/
+.vscode/
+
+build/
+sdkconfig
+sdkconfig.old
+debug.log
+
 credentials/credentials.h
