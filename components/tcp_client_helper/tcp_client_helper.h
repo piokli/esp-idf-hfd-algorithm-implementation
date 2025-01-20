@@ -29,7 +29,7 @@
 #include "lwip/sys.h"
 #include <lwip/netdb.h>
 
-#define HOST_IP_ADDR "192.168.0.150"
+#define HOST_IP_ADDR "192.168.1.27"
 #define PORT 65531
 
 void tcp_client_task(void *pvParameters);

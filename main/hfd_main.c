@@ -219,7 +219,11 @@ void gyroscope_maths_task(void *pvParameters)
 	int64_t time_us = 0;
 	int GYRO_STATE = 0;
 
-	const float GYRO_FALL_THRESHOLD = 280;
+	double lowpass = 0;
+	double last_lowpass = 0;
+	const double alpha = 0.385869545095038;
+
+	const float GYRO_FALL_THRESHOLD = 241.675; //((365.7+304.6)/2+148.2)/2 = 241.675
 
 	vTaskDelay(pdMS_TO_TICKS(1000));
 
@@ -233,7 +237,11 @@ void gyroscope_maths_task(void *pvParameters)
 		lsm6ds33_vector_calculate_gyro_raw(&gyro_data);
 		gyro_mag = lsm6ds33_vector_magnitude_of(gyro_data); // angular acceleration magnitude in [dps]
 
-		//ESP_LOGI(TAG_main, "%f", gyro_mag);
+		// low pass I order
+		lowpass = alpha * (double)gyro_mag + (1 - alpha) * last_lowpass;
+		last_lowpass = lowpass;
+
+		gyro_mag = (float)lowpass;
 
 		// now time for THE ALGORITHM
 		switch(GYRO_STATE) {
