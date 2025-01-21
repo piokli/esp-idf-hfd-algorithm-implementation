@@ -11,6 +11,7 @@
         "time.h": "c",
         "lsm6ds33.h": "c",
         "credentials.h": "c",
-        "wifi_station.h": "c"
+        "wifi_station.h": "c",
+        "random": "c"
     }
 }

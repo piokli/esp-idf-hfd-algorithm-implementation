@@ -129,20 +129,29 @@ void accelerometer_maths_task(void *pvParameters)
 	int64_t time_us = 0;
 
 	int ACC_STATE = 0;
-	const float UFT = 600; // Upper Fall Threshold
-	const float LFT = -250; // Lower Fall Threshold
+	const float UFT = 1.1; // Upper Fall Threshold (1.7+0.5)/2
+	const float LFT = -0.65; // Lower Fall Threshold (1.0+0.3)/2
 	float LFT_time_us = 0;
-	const int64_t MAX_FALLING_TIME_THRESHOLD = 600000;//650;
+	const int64_t MAX_FALLING_TIME_THRESHOLD = 600000;
 	const int64_t MIN_FALLING_TIME_THRESHOLD = 150;
 
-	float highpass_acc = 0;
-	float last_highpass_acc = 0;
-	float last_acc_mag = 0;
-	const float highpass_alpha = 0.9;
+	// float highpass_acc = 0;
+	// float last_highpass_acc = 0;
+	// float last_acc_mag = 0;
+	// const float highpass_alpha = 0.9;
 
-	float lowpass_acc = 0;
-	float last_lowpass_acc = 0;
-	const float lowpass_alpha = 0.25;
+	// float lowpass_acc = 0;
+	// float last_lowpass_acc = 0;
+	// const float lowpass_alpha = 0.25;
+
+	// custom filter
+	const int filt_order = 2;
+	const int num_coeffs = filt_order*2+1; // = 5
+	const double b[5] = {0.206572083826148,0,-0.413144167652296,0,0.206572083826148};
+	const double a[5] = {1,-0.905078920874777,0.597907856327917,-0.290736791781056,0.195815712655833};
+	double inputHistory[5] = {0.0, 0.0, 0.0, 0.0, 0.0,};
+	double outputHistory[5] = {0.0, 0.0, 0.0, 0.0, 0.0,};
+	double filtered = 0;
 
 	vTaskDelay(pdMS_TO_TICKS(1000));
 
@@ -156,19 +165,41 @@ void accelerometer_maths_task(void *pvParameters)
 		lsm6ds33_vector_calculate_acc_raw(&acc_data);
 		acc_mag = lsm6ds33_vector_magnitude_of(acc_data); 	// linear acceleration magnitude in [mg]
 
-		// highpass - TO REDO
-		highpass_acc = highpass_alpha * (last_highpass_acc + acc_mag - last_acc_mag);
-		last_highpass_acc = highpass_acc;
-		last_acc_mag = acc_mag;
+		acc_mag = acc_mag / 1000.0 - 1;
 
-		//lowpass - TO REDO
-		lowpass_acc = last_lowpass_acc + lowpass_alpha * (highpass_acc - last_lowpass_acc);
-		last_lowpass_acc = lowpass_acc;
+
+		// filtr
+		// Przesuń historię
+		for (int i = num_coeffs - 1; i > 0; i--) {
+			inputHistory[i] = inputHistory[i - 1];
+			outputHistory[i] = outputHistory[i - 1];
+		}
+		inputHistory[0] = (double)acc_mag;
+	
+		// Obliczanie wyjścia
+		filtered = 0.0;
+		for (int i = 0; i < num_coeffs; i++) {
+			filtered = filtered + b[i] * inputHistory[i];
+			if (i > 1) {
+				filtered = filtered - a[i] * outputHistory[i];
+			}
+		}
+		outputHistory[0] = filtered;
+
+
+		// // highpass - TO REDO
+		// highpass_acc = highpass_alpha * (last_highpass_acc + acc_mag - last_acc_mag);
+		// last_highpass_acc = highpass_acc;
+		// last_acc_mag = acc_mag;
+
+		// //lowpass - TO REDO
+		// lowpass_acc = last_lowpass_acc + lowpass_alpha * (highpass_acc - last_lowpass_acc);
+		// last_lowpass_acc = lowpass_acc;
 
 		//ESP_LOGI(TAG_main, "time_us, acc_mag, highpass_acc, lowpass_acc == %lld, %f, %f, %f", time_us, acc_mag, highpass_acc, lowpass_acc);
 
 		//change acc_mag after filters
-		acc_mag = lowpass_acc;
+		acc_mag = (float)filtered * (-1);
 
 		// THE ALGORITHM
 		switch (ACC_STATE) {
